@@ -102,8 +102,8 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-o
 .eqrow{display:grid;grid-template-columns:44px 1fr;gap:8px;align-items:center}
 .eqrow .lbl{font-size:12px;color:var(--mut)}
 .eqslots{display:grid;gap:5px}
-.eqslots.a{grid-template-columns:repeat(6,minmax(0,1fr))}
-.eqslots.p{grid-template-columns:repeat(4,minmax(0,1fr))}
+.eqslots.a{grid-template-columns:repeat(5,minmax(0,1fr))}
+.eqslots.p{grid-template-columns:repeat(5,minmax(0,1fr))}
 .eqs{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:58px;padding:4px 2px;background:var(--panel2);border:2px solid var(--line);border-bottom-width:4px;font-size:10px;font-weight:700;line-height:1.15;text-align:center}
 .eqs .ico{width:22px;height:22px}
 .eqs span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -444,6 +444,9 @@ const UPS={
  hp:{name:'체력',base:10,g:1.12,max:100},
  spd:{name:'공격 속도',base:60,g:1.25,max:80},
  crit:{name:'치명타',base:80,g:1.22,max:100},
+ c1:{name:'강화 치명',base:3000,g:1.22,max:100},
+ c2:{name:'궁극 치명',base:60000,g:1.24,max:100},
+ c3:{name:'초월 치명',base:2000000,g:1.26,max:100},
  gold:{name:'행운',base:120,g:1.28,max:200}
 };
 /* 성장 단계: 한 단계(max 레벨)를 다 찍으면 '이름 2, 3...'로 이어지고 레벨당 효과가 커진다 */
@@ -470,6 +473,8 @@ const bossTicketN=s=>1+Math.floor(s/50);
 const BOSS_TICKET_P=0.6;
 const NORMAL_TICKET_P=0.012;
 /* 패시브 스킬 효과(장착한 것만 적용) */
+const effLv=l=>l<=40?l:40+(l-40)*1.25;
+const sc=(x,knee,max)=>x<=knee?x:knee+(max-knee)*(1-Math.exp(-(x-knee)/(max-knee)));
 const PDEF={
  tough:{key:'hpP',f:l=>0.06*l},
  might:{key:'atkP',f:l=>0.05*l},
@@ -486,8 +491,13 @@ const PDEF={
  undying:{key:'low',f:l=>0.04*l},
  amp:{key:'skillDmg',f:l=>0.05*l},
  vigor:{key:'castHeal',f:l=>0.002*l},
- luckyhand:{key:'goldProc',f:l=>0.01*l}
+ luckyhand:{key:'goldProc',f:l=>0.01*l},
+ critall:{key:'critAll',f:l=>0.02*l},
+ enhcrit:{key:'c1',f:l=>0.002*l},
+ ultcrit:{key:'c2',f:l=>0.0012*l},
+ tracrit:{key:'c3',f:l=>0.0007*l}
 };
+for(const k in PDEF){const f0=PDEF[k].f;PDEF[k].f=l=>f0(effLv(l));}
 function passivesOf(st){
  const P={};
  const eq=st.eqP||[];
@@ -495,6 +505,8 @@ function passivesOf(st){
   const d=PDEF[eq[i]],lv=(st.sk&&st.sk[eq[i]])|0;
   if(d&&lv>0)P[d.key]=(P[d.key]||0)+d.f(lv);
  }
+ if(P.leech)P.leech=sc(P.leech,.3,.8);
+ if(P.cdr)P.cdr=sc(P.cdr,.4,.8);
  return P;
 }
 /* 성공확률 상승권: 개수로 소모, 장당 +1%p. 하락방지권보다 드랍률이 낮다 */
@@ -527,15 +539,20 @@ function derive(st,buff){
  const atk=8*tierPow('atk',st.up.atk,1.07,0.02)*wAtkMult(L)*rageA*(1+(P.atkP||0));
  const A=st.aLv||0,C=st.cLv||0;
  const maxHp=60*tierPow('hp',st.up.hp,1.08,0.02)*wHpMult(L)*aHpMult(A)*(1+(P.hpP||0));
- const red=Math.min(0.8,1-(1-aDefense(A))*(1-Math.min(0.5,P.def||0)));
- const aspd=Math.min(12,(1+tierLin('spd',st.up.spd,0.03))*rageS*(1+(P.spdP||0)));
- const crit=Math.min(0.75,0.05+tierLin('crit',st.up.crit,0.005)+cCritCh(C)+(P.crit||0)+(buff.crit||0));
- const critDmg=1.5+tierLin('crit',st.up.crit,0.03)+cCritDmg(C)+(P.critDmg||0);
+ const red=sc(1-(1-aDefense(A))*(1-(P.def||0)),0.6,0.93);
+ const aspd=sc((1+tierLin('spd',st.up.spd,0.03))*rageS*(1+(P.spdP||0)),8,20);
+ const u1=st.up.c1|0,u2=st.up.c2|0,u3=st.up.c3|0;
+ const crit=sc(0.05+tierLin('crit',st.up.crit,0.005)+cCritCh(C)+(P.crit||0)+(buff.crit||0),0.6,0.95);
+ const c1=sc(tierLin('c1',u1,0.003)+(P.c1||0),0.6,0.95),c2=sc(tierLin('c2',u2,0.002)+(P.c2||0),0.6,0.95),c3=sc(tierLin('c3',u3,0.0012)+(P.c3||0),0.6,0.95);
+ const cd0=1.5+tierLin('crit',st.up.crit,0.03)+cCritDmg(C)+(P.critDmg||0),all=1+(P.critAll||0);
+ const cM=[cd0*all,cd0*(1.5+tierLin('c1',u1,0.03))*all,cd0*(2+tierLin('c2',u2,0.04))*all,cd0*(3+tierLin('c3',u3,0.06))*all];
+ const p3=c3,p2=(1-c3)*c2,p1=(1-c3)*(1-c2)*c1,p0=(1-c3)*(1-c2)*(1-c1)*crit;
+ const cx=1+p0*(cM[0]-1)+p1*(cM[1]-1)+p2*(cM[2]-1)+p3*(cM[3]-1);
  const goldMult=1+tierLin('gold',st.up.gold,0.05)+cGold(C)+(P.gold||0);
  const luck=1+tierLin('gold',st.up.gold,0.02)+cLuck(C)+(P.luck||0);
- const dps=atk*aspd*(1+crit*(critDmg-1));
+ const dps=atk*aspd*cx;
  const cp=Math.floor(Math.sqrt(dps*maxHp/(1-red))*10);
- return {atk,maxHp,aspd,crit,critDmg,goldMult,luck,dps,cp,red,ps:P};
+ return {atk,maxHp,aspd,crit,critDmg:cM[0],c1,c2,c3,cM,cx,goldMult,luck,dps,cp,red,ps:P};
 }
 /* ---------- 속성 / 몬스터 그룹 / 일일 던전 / 한계돌파 ---------- */
 const EL={fire:{n:'화염',s:'화',c:'#ff7a2f'},ice:{n:'냉기',s:'냉',c:'#8fd8ff'},thunder:{n:'번개',s:'뇌',c:'#ffe45a'},poison:{n:'맹독',s:'독',c:'#7fdc5f'},dark:{n:'암흑',s:'암',c:'#b07cff'}};
@@ -806,7 +823,7 @@ const PSV=[
  ['swift','날렵한 발',7,'bolt',v=>'공격 속도 +'+(v*100).toFixed(1)+'%'],
  ['ironwall','철벽 방어',11,'shield',v=>'받는 피해 -'+(v*100).toFixed(1)+'%'],
  ['eagle','예리한 눈',15,'eye',v=>'치명타 확률 +'+(v*100).toFixed(1)+'%p'],
- ['mastery','숙련된 손',20,'clock',v=>'스킬 재사용 시간 -'+(v*100).toFixed(1)+'% (최대 50%)'],
+ ['mastery','숙련된 손',20,'clock',v=>'스킬 재사용 시간 -'+(v*100).toFixed(1)+'% (높을수록 증가폭 감소)'],
  ['greed','탐욕',25,'coin',v=>'골드 획득 +'+Math.round(v*100)+'%'],
  ['deadly','치명 강화',30,'star',v=>'치명타 피해 +'+Math.round(v*100)+'%'],
  ['gemeye','보석 감정',36,'gem',v=>'강화석·재료 드랍 +'+(v*100).toFixed(1)+'%'],
@@ -816,13 +833,17 @@ const PSV=[
  ['amp','스킬 증폭',68,'zap',v=>'스킬 피해 +'+Math.round(v*100)+'%'],
  ['undying','불굴',80,'flame',v=>'체력 30% 이하일 때 공격력 +'+Math.round(v*100)+'%'],
  ['vigor','활력',95,'cross',v=>'스킬 사용 시 최대 체력 '+(v*100).toFixed(1)+'% 회복'],
- ['luckyhand','행운의 손',110,'boost',v=>'처치 시 '+Math.round(v*100)+'% 확률로 골드 2배']
+ ['luckyhand','행운의 손',110,'boost',v=>'처치 시 '+Math.round(v*100)+'% 확률로 골드 2배'],
+ ['critall','종합 치명 증폭',125,'star',v=>'모든 치명타(일반·강화·궁극·초월) 피해 +'+Math.round(v*100)+'%'],
+ ['enhcrit','강화 치명',140,'bolt',v=>'강화 치명타 확률 +'+(v*100).toFixed(2)+'%p'],
+ ['ultcrit','궁극 치명',170,'flame',v=>'궁극 치명타 확률 +'+(v*100).toFixed(2)+'%p'],
+ ['tracrit','초월 치명',200,'skull',v=>'초월 치명타 확률 +'+(v*100).toFixed(2)+'%p']
 ];
 PSV.forEach(a=>{SK[a[0]]={name:a[1],unlock:a[2],cd:0,icon:a[3],passive:true,desc:lv=>a[4](PDEF[a[0]].f(lv))};});
 const SP_ORDER=PSV.map(a=>a[0]);
 const ALL_SK=SK_ORDER.concat(SP_ORDER);
 SK_ORDER.splice(0,SK_ORDER.length,...SK_ORDER.filter(id=>!SK[id].passive));
-const EQ_A=6,EQ_P=4;
+const EQ_A=10,EQ_P=10;
 const mkSk=()=>{const o={};ALL_SK.forEach(id=>{o[id]=0;});return o;};
 ALL_SK.forEach(id=>{SK[id].max=40;SK[id].cost=lv=>Math.floor(30*Math.pow(1.16,SK[id].unlock-1)*Math.pow(1.38,lv-1));});
 const rageAtk=()=>1.5+0.04*(Math.max(1,S.sk.rage)-1);
@@ -832,7 +853,7 @@ const hasteMul=()=>1.5+0.02*(Math.max(1,S.sk.haste)-1);
 const KEY='blockdungeon.save.v2',OLDKEY='blockdungeon.save.v1';
 function newState(){
   return {v:2,stage:1,bestStage:1,ks:0,gold:0,stones:0,tickets:0,wLv:0,wMax:0,lvAt:Date.now(),aLv:0,aMax:0,aAt:Date.now(),cLv:0,cMax:0,cAt:Date.now(),boosts:0,boostUse:0,sel:'w',bsUsed:0,
-    up:{atk:0,hp:0,spd:0,crit:0,gold:0},sk:mkSk(),skp:{},res:{fire:0,ice:0,thunder:0,poison:0,dark:0},shards:{fire:0,ice:0,thunder:0,poison:0,dark:0},dg:{d:'',n:0},dgRuns:0,arena:{w:0,l:0},eqA:[],eqP:[],eqInit:false,
+    up:{atk:0,hp:0,spd:0,crit:0,gold:0,c1:0,c2:0,c3:0},sk:mkSk(),skp:{},res:{fire:0,ice:0,thunder:0,poison:0,dark:0},shards:{fire:0,ice:0,thunder:0,poison:0,dark:0},dg:{d:'',n:0},dgRuns:0,arena:{w:0,l:0},eqA:[],eqP:[],eqInit:false,
     auto:true,farm:false,speed:1,useTicket:true,autoEnh:false,autoTarget:10,name:'',duel:{w:0,l:0},
     totalKills:0,playSec:0,enhTries:0,enhOk:0,enhFail:0,enhDrop:0,tkUsed:0,tkBought:0,savedAt:Date.now()};
 }
@@ -893,6 +914,11 @@ function sanitize(s){
   s.eqP=(Array.isArray(s.eqP)?s.eqP:[]).filter((id,i,a2)=>SK[id]&&SK[id].passive&&s.sk[id]>0&&a2.indexOf(id)===i).slice(0,EQ_P);
   if(!s.eqInit){
     s.eqInit=true;
+    for(const id of SK_ORDER)if(s.sk[id]>0&&s.eqA.length<EQ_A&&s.eqA.indexOf(id)<0)s.eqA.push(id);
+    for(const id of SP_ORDER)if(s.sk[id]>0&&s.eqP.length<EQ_P&&s.eqP.indexOf(id)<0)s.eqP.push(id);
+  }
+  if(!s.eq10){
+    s.eq10=true;
     for(const id of SK_ORDER)if(s.sk[id]>0&&s.eqA.length<EQ_A&&s.eqA.indexOf(id)<0)s.eqA.push(id);
     for(const id of SP_ORDER)if(s.sk[id]>0&&s.eqP.length<EQ_P&&s.eqP.indexOf(id)<0)s.eqP.push(id);
   }
@@ -2306,12 +2332,15 @@ function killMonster(m){
   }
 }
 const dmgMul=()=>G.frozenT>0?1.3:1;
+const CRC=['#ffd84d','#ff9a3c','#ff5ec8','#7ffcff'];
+function critRoll(base){if(Math.random()<ST.c3)return 3;if(Math.random()<ST.c2)return 2;if(Math.random()<ST.c1)return 1;return base?0:-1;}
+const critMult=t=>t<0?1:ST.cM[t];
 function heroAttack(m){
-  const crit=Math.random()<ST.crit,ps=ST.ps||{},dmg=ST.atk*(crit?ST.critDmg:1)*dmgMul()*(m.boss?1+(ps.boss||0):1)*lowMul();
+  const ct=critRoll(Math.random()<ST.crit),crit=ct>=0,ps=ST.ps||{},dmg=ST.atk*critMult(ct)*dmgMul()*(m.boss?1+(ps.boss||0):1)*lowMul();
   if(ps.leech)G.heroHp=Math.min(ST.maxHp,G.heroHp+dmg*ps.leech);
   m.hp-=dmg;m.flash=.1;G.atkAnim=.2;
-  floatText(m.x+(Math.random()*14-7),62+Math.random()*8,fmt(dmg),crit?'#ffd84d':'#ffffff',crit?14:11);
-  burst(m.x-6,24,crit?'#ffd84d':'#ffffff',crit?8:4,crit?90:60);
+  floatText(m.x+(Math.random()*14-7),62+Math.random()*8,fmt(dmg),crit?CRC[ct]:'#ffffff',crit?14+ct:11);
+  burst(m.x-6,24,crit?CRC[ct]:'#ffffff',crit?8+ct*3:4,crit?90:60);
   if(crit&&!RM)G.shake=.12;
   Snd.play(crit?'crit':'hit');
   if(m.hp<=0)killMonster(m);
@@ -2354,7 +2383,7 @@ const lowMul=()=>(ST.ps&&ST.ps.low&&G.heroHp<ST.maxHp*.3)?1+ST.ps.low:1;
 function dealSkill(mult,color,crit){
   const m=G.mon;if(!m)return 0;
   const ps=ST.ps||{};
-  const dmg=ST.atk*mult*(crit?ST.critDmg:1)*dmgMul()*(1+(ps.skillDmg||0))*(m.boss?1+(ps.boss||0):1)*lowMul();
+  const dmg=ST.atk*mult*critMult(critRoll(!!crit))*dmgMul()*(1+(ps.skillDmg||0))*(m.boss?1+(ps.boss||0):1)*lowMul();
   m.hp-=dmg;m.flash=.16;G.atkAnim=.2;
   floatText(m.x,74,fmt(dmg),color,15);
   if(ps.leech)G.heroHp=Math.min(ST.maxHp,G.heroHp+dmg*ps.leech);
@@ -2414,7 +2443,7 @@ const AOE_FX=new Set(['meteor','dome','cloud','wave','star','arrows','orbit','bo
 function castSkill(id){
   const lv=S.sk[id],def=SK[id],m=G.mon;
   if(lv<1||G.cd[id]>0||G.phase!=='fight'||!m||m.dying>0||m.x>m.tx||m.hp<=0)return false;
-  G.cd[id]=def.cd*(1-clamp((ST.ps&&ST.ps.cdr)||0,0,.5));
+  G.cd[id]=def.cd*(1-((ST.ps&&ST.ps.cdr)||0));
   G.splash=AOE_FX.has(def.vfx||id)?1:.5;
   const mp=wxs(m.x,24),hp=wxs(HX,20);
   if(ST.ps&&ST.ps.castHeal)G.heroHp=Math.min(ST.maxHp,G.heroHp+ST.maxHp*ST.ps.castHeal);
@@ -2662,10 +2691,11 @@ function upEffect(k,st){
   if(k==='atk')return fmt(st.atk);
   if(k==='hp')return fmt(st.maxHp);
   if(k==='spd')return st.aspd.toFixed(2)+'회/초';
+  if(k==='c1'||k==='c2'||k==='c3'){const i=+k[1];return pct([st.c1,st.c2,st.c3][i-1])+' · ×'+st.cM[i].toFixed(2);}
   if(k==='crit')return pct(st.crit)+' · ×'+st.critDmg.toFixed(2);
   return '골드 +'+Math.round((st.goldMult-1)*100)+'% · 강화석 확률 ×'+st.luck.toFixed(2);
 }
-const UPD={atk:'sword',hp:'heart',spd:'bolt',crit:'star',gold:'coin'};
+const UPD={atk:'sword',hp:'heart',spd:'bolt',crit:'star',c1:'bolt',c2:'flame',c3:'skull',gold:'coin'};
 function buildUp(){
   $('#upList').innerHTML=Object.keys(UPS).map(k=>
     '<div class="up" data-k="'+k+'">'+ico(UPD[k],'big')+
@@ -2850,7 +2880,7 @@ function updateSkill(){
 
 /* ---------- 정보 UI ---------- */
 function updateInfo(){
-  const v=[['공격력',fmt(ST.atk)],['체력',fmt(ST.maxHp)],['공격 속도',ST.aspd.toFixed(2)+'/초'],['치명타 확률',pct(ST.crit)],['치명타 피해','×'+ST.critDmg.toFixed(2)],['초당 피해',fmt(ST.dps)],['골드 보너스','+'+Math.round((ST.goldMult-1)*100)+'%'],['전투력',fmt(ST.cp)]];
+  const v=[['공격력',fmt(ST.atk)],['체력',fmt(ST.maxHp)],['공격 속도',ST.aspd.toFixed(2)+'/초'],['치명타 확률',pct(ST.crit)],['치명타 피해','×'+ST.critDmg.toFixed(2)],['강화 치명',pct(ST.c1)+' · ×'+ST.cM[1].toFixed(2)],['궁극 치명',pct(ST.c2)+' · ×'+ST.cM[2].toFixed(2)],['초월 치명',pct(ST.c3)+' · ×'+ST.cM[3].toFixed(2)],['초당 피해',fmt(ST.dps)],['골드 보너스','+'+Math.round((ST.goldMult-1)*100)+'%'],['전투력',fmt(ST.cp)]];
   const g=$('#statGrid');
   if(!g._built){g.innerHTML=v.map(()=>'<div><span></span><b></b></div>').join('');g._built=true;}
   $$('div',g).forEach((d,i)=>{setT($('span',d),v[i][0]);setT($('b',d),v[i][1]);});
@@ -2878,7 +2908,7 @@ function resetRun(){
 }
 
 /* ---------- 랭킹 / 결투 ---------- */
-function myCombat(){const d=derive(S);return {atk:d.atk,hp:d.maxHp,aspd:d.aspd,crit:d.crit,critDmg:d.critDmg};}
+function myCombat(){const d=derive(S);return {atk:d.atk*d.cx,hp:d.maxHp,aspd:d.aspd,crit:0,critDmg:1};}
 function simDuel(a,b){
   let ha=a.hp,hb=b.hp,ca=0,cb=0,t=0;const dt=.05;
   while(t<90&&ha>0&&hb>0){
@@ -3277,7 +3307,7 @@ async function onlineInit(){
 const genCode=()=>{const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let s='';for(let i=0;i<6;i++)s+=c[Math.floor(Math.random()*c.length)];return s;};
 function myFighter(){
   const d=derive(S);
-  return {atk:d.atk,hp:d.maxHp/(1-d.red),aspd:d.aspd,crit:d.crit,critDmg:d.critDmg};
+  return {atk:d.atk*d.cx,hp:d.maxHp/(1-d.red),aspd:d.aspd,crit:0,critDmg:1};
 }
 function profileDoc(){
   const d=derive(S),f=myFighter();
